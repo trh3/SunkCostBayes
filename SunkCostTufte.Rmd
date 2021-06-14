@@ -1,0 +1,481 @@
+---
+title: "Sunk Cost and Citizen Support for US Conflicts"
+author: "Analyst: Teague Henry \n PI: Patricia Sullivan"
+date: '`r Sys.Date()`'
+output:
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex 
+  tufte::tufte_html: default
+link-citations: yes
+subtitle: Initial Models
+bibliography: SunkCostPapers.bib
+---
+
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+
+library(ggplot2)
+library(rstan)
+load("StateLevel.Rdata")
+#load("readInForReport.Rdata")
+
+posteriorProbs <- function(sim.list){
+  for(i in 1:length(sim.list)){
+    sim.list[[i]] <- t(do.call("rbind",sim.list[[i]]))
+    
+    
+  }
+  sim.list <- do.call("rbind", sim.list)
+  sim.list <- apply(sim.list, MARGIN = 2, FUN = function(x){
+    return(sum(x>=0)/length(x))
+    
+  })
+  
+  return(round(sim.list,digits = 3))
+  
+  }
+#Afghanistan Iraq Kuwait Lebanon Vietnam <- warIDs
+
+
+```
+
+# Abstract 
+
+This document contains the analysis of citizen support for US conflicts throughout history. The question of interest is that of sunk cost effects for casualties. If a sunk cost effect exists, then as casualties increase during a conflict, the support for sustaining that conflict will increase rather than decrease. In the following analysis we found evidence for a sunk cost effect that was both specific to several conflicts, as well as moderated by demographics such as gender and party membership. The most prominent finding was a sunk cost effect for the Iraq War, for individuals who were male, members of the Republican party, and believed the conflict was a success. In summary, no general sunk cost effect was found, rather several conflict and demographic specific effects were investigated. 
+
+# Introduction
+
+This document is a report regarding the initial analysis of a set of national polling data regarding United States residents opinions regarding various conflicts the US was engaged in. This polling data was collected during each of the nine conflicts that the United States was engaged in since, and including, the Vietnam War. The polling data consists of demographic information regarding the respondent, as well as several items that assess the opinions of the respondent towards the current conflict. The most salient of these items is the one assessing support of sustaining the current conflict, for reasons that will be described below. Each conflict has multiple polling dates, but no respondent was polled more than once. 
+
+In addition to the individual level responses, this  dataset also contains information regarding the current casualties in the conflict, up to each polling date, as well as duration of the conflict up to the polling date. These are key quantities of interest to this project.
+
+
+## Casualties as a Sunk Cost
+
+`r newthought('The primary goal')` of these analyses is to assess if the casualties sustained during a conflict act as a _sunk cost_ with regard to citizen support for sustaining the conflicts. If this were the case, then as casualties increase during a conflict, respondents would become more likely to endorse sustaining the conflict, rather than become less likely to endorse sustaining the conflict.
+
+This hypothesized effect runs counter to the conventional wisdom that as casualties rise during an armed conflict, public support declines (Eichenberg 2005; Gartner, Segura, and Barratt 2003; Gartner and Segura 1998; Larson and Savych 2005; Larson 1996; Jacobson, 2010). However, these studies examined the general effect of casualties, and more recent findings suggest that the effect of casualties on an individual's perception of a conflict is related to the individual's subjective belief of the importance of the conflict (Feaver and Gelpi, 2004). Additionally, it has been noted that the effect of casualties on support of a conflict differed between men and women, though this gender effect appears to be related to the precise conflict in question (Eichenberg, 2016; Brooks \& Valentino, 2011).
+
+To examine a possible sunk cost effect of casualties on citizen support, we will take a model building approach in this report. We will begin with a simple model, Model 1, which proposes that the effect of casualties is homogeneous for all individuals, and models the main effects of demographics on support for a conflict. Model 2 proposes that the effect of casualties differs by demographics as well as opinions (defined as believing the conflict was a mistake or success, and if the respondent was the same political party as the sitting president.), but that there is no difference between conflicts in the effects of these variables on the impact of casualties on citizen support. Finally, Model 3 relaxes this restriction and allows the effect of these additional variables (e.g. what is the effect of casualties on support for males vs. females) to differ based on the specific conflict. 
+
+From Model 3 (and to a lesser extent Model 2), we find that there is evidence for a sunk cost effect of casualties, but that this effect is highly specific to both demographics, as well as the specific conflict. For example, there is evidence that individuals who were partisan during the Vietnam War had a sunk cost effect of casualties, while in other conflicts this effect was either smaller in magnitude or the reversed direction. The results in this report support the previous findings that the effect of casualties on support for an armed conflict is highly variable with regard to both the conflict in question as well as the individual features of a respondent.
+
+
+## Polling Data at Three Levels
+
+The national polling data here was collected during each conflict, at a variety of polling dates within each conflict. This gives the data what is termed a _hierarchical_ structure. If left un-modeled, this can lead to a higher rate of spurious findings, as well as the danger of committing an ecological fallacy, wherein an effect is found overall that is not representative of any particular subgroup in the sample. The first level of clustering is the individual respondent. The next level is polling date, and the final and third level is the conflict. Due to the clustered nature of this data, we no longer have  _independent identically distributed_ observations, and  so we will have to take a hierarchical modeling approach. This approach will be detailed after the data is described.
+
+#Data Descriptives
+
+`r newthought("There are nine conflicts")` contained in this national level polling data. Listed chronologically these are: Vietnam War from 1967 to 1969, Conflict in Lebanon from September 1983 to February 1984, Conflict in Panama between May 1989 and January 1990, the first Gulf War in January and February of 1991, located in Kuwait, the conflict in Somalia from December 1992 to October 1993, the intervention in Kosovo in March and April 1999, Operation Iraqi Freedom from 2003 to 2007, and finally Operation Enduring Freedom in Afghanistan from 2011 through 2012.
+
+These conflicts operate on vastly different scales of both duration and casualty rate, which is evidenced in Figure 1 below:
+
+```{r fig-fullwidth,, fig.width = 10, fig.height = 5, fig.fullwidth = TRUE, fig.cap = "Casualties by Days Since Beginning of Conflict, colors representing different conflicts. Does not include the Vietnam War, which had over 50,000 casualties at its peak. Note the differences in the scale of duration between conflicts as well casualties.", warning=FALSE, cache=TRUE,echo=FALSE}
+
+CasPlotData <- aggregate(natpollsoriginal[,c("cas2date", "duration")], by = list(natpollsoriginal[, "location"], natpollsoriginal[,"polldate"]), FUN = mean)
+CasPlotData <- CasPlotData[-which(CasPlotData[,1] == "Vietnam"),]
+
+CasPlotData[,"Group.1"] <- factor(CasPlotData[,"Group.1"],
+                                  levels = c("Lebanon","Grenada", "Panama", "Kuwait","Somalia", "Yugoslavia", "Iraq", "Afghanistan"))
+ggplot(CasPlotData, aes(x =duration, y = cas2date, color = Group.1)) +geom_line(aes(color = Group.1)) + geom_point(aes(color = Group.1))+
+  theme_classic() + labs(x = "Duration since beginning of conflict (days)", y = "Casualties to date", color= "Conflict") 
+
+```
+
+
+Most of these conflicts were fairly short, and resulted in few US casualties. The exception to this is the Vietnam War (Not shown in the figure), which had over 50,000 casualties at its peak, The Iraq War, the Operation Enduring Freedom (Afghanistan), and to a lesser extent the conflict in Lebanon, had higher rates of casualties than other conflicts. The spike in casualties in the Lebanon conflict was due to the Beirut barracks bombing, which caused a total of 299 casualties. Note too the difference in durations, with the majority of conflicts lasting a year or less, while the higher casualty conflicts lasted considerably longer. 
+
+Due to this difference in casualty rates, we restrict our analysis to the Vietnam War, the Lebanon conflict, the Iraq War, Operation Enduring Freedom in Afghanistan, and, in Model 2 and 3, the first Gulf War, in Kuwait. The other conflicts had so few casualties and were so short that to expect an observable casualty effect on support is not reasonable.
+
+
+## Demographics
+
+`r newthought("The key demographics")` that we will focus on in our models are gender, and party status. Age was not collected in any poll. Additionally included in the dataset is information on partisanship, which is an indicator of if the president at the time of the conflict was of the same party as the respondent. In Model 1, we explicitly model Republican status, while in Models 2 and 3 we switch to the partisan status indicator. We have also included mean level of endorsement of sustaining the conflict[^1].
+
+[^1]:Interestingly, the highest rate of sustain endorsement is seen for the Vietnam War, which was the longest and highest casualty rate conflict in the dataset. This suggests (in a descriptive sense) that casualty rate/duration could indeed have a sunk cost type effect.
+
+```{r echo = F}
+library(knitr)
+
+demoTab <- aggregate(cbind(as.numeric(natpolls[,"male"])-1, as.numeric(natpolls[,"republican"]) - 1, as.numeric(natpolls[,"sustain_mod"])-1),by = list(natpolls[,"location"]), FUN = mean, na.rm = T)
+names(demoTab) <- c("", "% Male", "% Repub", "% Sustain")
+
+demoTab <- demoTab[5:1,]
+
+demoTab[,2:4] <- round(demoTab[,2:4], digits = 2)
+
+kable(demoTab, caption = "Demographic Information",row.names = F)
+
+```
+
+
+We now move onto a description of the three models fit to the national level polling data.
+
+#Models
+
+## Rationale for a Bayesian Approach
+
+`r newthought("In the following analysis")` we take a Bayesian Hierarchical Modeling approach for several reasons. The first and probably most pressing reason is computational efficiency. Classical maximum likelihood estimation for typical multilevel models with continuous and normally distributed outcomes is fairly efficient, even for a three level setup as we have here. But, as we are in a generalized linear framework with a binary outcome (decision to endorse sustain vs not), maximum likelihood estimation then relies on numerical integration techniques. The computational time scales exponentially with the number of random effects in the model, and as our simplest model has five random effects, the maximum likelihood estimation of these models would take a very long time, and would have no guarantee of convergence. Bayesian multilevel models on the other hand sample from the posterior distributions of the estimated parameters, and do not need to perform any sort of full numerical integration, which makes them computationally considerably more efficient for estimating multilevel models.
+
+The second rationale behind making the move to a Bayesian framework is that a multilevel model is more naturally expressed in the language of hierarchical priors and sharing information. While both frequentist and Bayesian approaches model the random effects as drawn from a distribution of effects, the notion of what a distribution of parameters is less interpretable in a frequentist framework, but is very natural in a Bayesian framework. Additionally, we also get direct estimates of the random effects per conflict, which is of theoretical interest, particularly if the effect of casualties is tied to the particular conflict.
+
+However, the cost of moving to a Bayesian framework is in selecting appropriate prior distributions for parameters. In this case, we will select either non-informative, or weakly informative priors for each parameter in our model. In many cases, the differences between these two choices are negligible, such as choosing a completely uninformative prior for a regression coefficient vs. a vague prior. In other cases, such as selecting priors for variance parameters, non-informative priors can cause convergence issues where weakly informative priors would not. Due to the scaling of the parameters in a logistic regression model (log-odds scale), weakly informative priors are not unreasonable, as, for example, a log-odds of 10 is not substantially different from a log odds of 5. We will provide rationale for prior choice in side notes as necessary.
+
+
+##On the interpretation of effect estimates
+
+The models presented below are hierarchical logistic models, and this complicates interpretation of the parameters. The parameters are in the metric of log-odds, which correspond to odds ratios. A negative log odds means that the outcome is less likely, while a positive log odds means the outcome is more likely. Due to the number of interactions in the following models, as well as sheer number of effects, values of the parameters will not be directly interpreted, in that increases and decreases in probability will not be calculated out and presented numerically. Instead, direction and magnitude will be discussed in general terms. What will be presented numerically are the posterior probabilities that an effect is negative or positive. We can calculate this due to the Bayesian framework. These probabilities provide easily interpreted metrics as to the certainty of our results. 
+
+Finally, in interpreting the Median and Credible Interval plots, the value of 0 is  particularly important value. A log odds of 0 suggests that the variable has no impact on the probability of the outcome.
+
+##Model 1: Random Intercepts Random Slopes 
+
+`r newthought("Our first model")` is a simple model, while still being theoretically valid. This model consists of fixed effects for the log of casualties to date, the respondent being male, and the respondent being Republican. We include random intercepts for each poll-date, clustered within a random intercept for each conflict. 
+
+We propose random slopes at the conflict level for the log of casualties, the respondent being male, and the respondent being Republican. While we have the information needed to estimate random slopes at the poll date level for both being male and being Republican, this would add 94 additional parameters to the model, and likely would not add any additional information, so we do not specify that in this model.
+
+The full model is specified in equation form below:
+
+\begin{multline}\\
+logit^{-1}(y_i) = \beta_{0jk} + \beta_{1k}Gender_i + \beta_{2k}Male_i + \beta_{3k}LogCasualties_{ijk}\\
+\beta_{0jk} = \beta_0 + U_{jk}\\
+U_{0jk} \sim N(U_{0k}, \sigma^2_{0j})\\
+U_{0k} \sim N(0, \sigma^2_{0k})\\
+\beta_{1k} = \beta_1 + U_{1k}\\
+U_{1k} \sim N(0, \sigma^2_{1k})\\
+\beta_{2k} = \beta_2 + U_{2k}\\
+U_{2k} \sim N(0, \sigma^2_{2k})\\
+\beta_{3k} = \beta_1 + U_{3k}\\
+U_{3k} \sim N(0, \sigma^2_{3k})\\
+\end{multline}
+
+Where $U$ denotes a random effect, $i$ subscript indicates individual response, $j$ subscript indicates polling date, and $k$ subscript indicates conflict. This model corresponds to a random-intercept 3 level multilevel model, with random slopes on the 3rd level (the level of conflict). 
+Due to our Bayesian framework, the parameters that now need priors are as follows `r margin_note("Normal with mean 0 and variance 100 is a fairly typical vague prior for regression coefficients, while a half Cauchy with a variance of 25 is a recommended weakly informative prior for variance components (Gelman, 2008)")`:
+
+\begin{multline}\\
+\beta_1 \sim N(0,100) \\
+\beta_2 \sim N(0,100) \\
+\beta_3 \sim N(0,100) \\
+\sigma^2_{0j}\sim |Cauchy(0,25)| \\
+\sigma^2_{0k}\sim |Cauchy(0,25)| \\
+\sigma^2_{1k}\sim |Cauchy(0,25)| \\
+\sigma^2_{2k}\sim |Cauchy(0,25)| \\
+\sigma^2_{3k}\sim |Cauchy(0,25)| \\
+\end{multline}
+
+
+To note the similarities to a frequentist approach, $\beta_0, \beta_1, \beta_2, \beta_3$ correspond to the intercept and fixed effects for gender, Republican and the log of casualties respectively. The $\sigma^2$ estimates correspond to the variance components that one would obtain from a random effects model. 
+
+Furthermore, we can obtain posterior distributions for each conflicts' individual effects, which allows us to diagnose heterogeneity between conflicts. These distributions are going to be of prime interest to this analysis.
+
+
+## Results for Model 1:
+`r newthought("Figure 2 contains")` posterior median estimates and 95 percent credible intervals for each fixed effect parameter, as well as each conflict level effect. Credible intervals represent the interval in which there is a specified probability of the parameter falling into. For example, a 80 % credible interval means that the parameter has a 80% chance of being within that interval. This is a different interpretation than a confidence interval, and can be done due to the Bayesian framework we are employing.
+
+
+
+```{r fig-fullwidth2, fig.width = 10, fig.height = 7, fig.fullwidth = TRUE, fig.cap = "Posterior Medians and (50) 95 Credible Intervals. Note that overall, males and Republicans have higher chances of endorsing sustaining the conflict.", cache=TRUE,echo=FALSE, message=FALSE}
+ Model1FullResults <- FullrandSlopeCasRandInt
+probs <- posteriorProbs(Model1FullResults@sim$samples)
+ names(Model1FullResults)[1:4] <-c("Intercept", "Republican", "Male", "Ln(Casualties)")
+ names(Model1FullResults)[grepl("beta_cas_slope", names(Model1FullResults))] <- c("Ln(Casualties) Afghanistan", "Ln(Casualties) Iraq","Ln(Casualties) Lebanon","Ln(Casualties) Vietnam")
+ names(Model1FullResults)[grepl("beta_repub_slope", names(Model1FullResults))] <- c("Republican Afghanistan", "Republican Iraq","Republican Lebanon","Republican Vietnam")
+ names(Model1FullResults)[grepl("beta_male_slope", names(Model1FullResults))] <- c("Gender Afghanistan", "Gender Iraq","Gender Lebanon","Gender Vietnam")
+ names(Model1FullResults)[grepl("beta_wars_int", names(Model1FullResults))] <- c("Intercept Afghanistan", "Intercept Iraq","Intercept Lebanon","Intercept Vietnam")
+ 
+p <- plot(Model1FullResults, pars = c("beta_0", "beta_repub", "beta_male", "beta_cas", "beta_wars_int",
+                                 "beta_cas_slope","beta_repub_slope", "beta_male_slope"),ci_level = .5, outer_leve =.95)
+
+p
+```
+
+
+
+The model was estimated using RStan, an R package that interfaces with Stan, a software package built to efficiently estimate Bayesian models of all kinds. An examination of trace plots indicated that all parameter estimates quickly converged and exhibited good properties. 
+
+
+
+
+## Effect of Demographics and Conflict on Sustain Endorsement
+
+```{r echo =FALSE}
+sumMaleRepub <- summary(Model1FullResults, pars = c("beta_male", "beta_repub"))
+
+lowermale <- sumMaleRepub[[1]][1,"2.5%"]
+lowerrepub <- sumMaleRepub[[1]][2,"2.5%"]
+uppermale <- sumMaleRepub[[1]][1,"97.5%"]
+upperrepub <- sumMaleRepub[[1]][2,"97.5%"]
+
+```
+
+
+```{r fig-margin3, fig.margin = TRUE, fig.cap = "Intercept Trace Plot. Indicates estimation converged well.", fig.width=4, fig.height=3.5, cache=TRUE, echo = FALSE}
+stan_trace(Model1FullResults, pars = "beta_0")
+
+```
+
+The main effect of both male and Republican are positive, with probabilities `r probs["beta_male"]` and `r probs["beta_repub"]`. This suggests that in general being either male or Republican increases the probability that one endorses sustaining a conflict. 
+
+```{r malerepubhists, fig.margin = TRUE,fig.show='hold', fig.cap = "Histograms of Male and Republican Main Effects. Normal distributions and small standard deviations suggest higher degrees of accuracy.", fig.width=4, fig.height=3.5, cache=TRUE, echo = FALSE, message = FALSE}
+stan_hist(Model1FullResults, pars = "beta_male")
+stan_hist(Model1FullResults, pars = "beta_repub")
+
+```
+
+There is a clear and consistent conflict specific effect of both being male and being Republican on the probability of endorsing sustaining a conflict. In all cases, the effect was positive (average probabilities of being positive being `r mean(probs[grepl("beta_male_slope", names(probs), fixed = T)])` and `r mean(probs[grepl("beta_repub_slope", names(probs), fixed = T)])` respectively), suggesting that being either male or Republican is associated with a higher probability of endorsing sustaining a conflict for every conflict.
+
+
+##Effect of Casualties on Probability of Sustain Endorsement
+
+`r newthought("While for almost")` every conflict the mean value for the effect of casualties on probability of sustain endorsement was negative, the credible intervals are effectively centered on 0. Indeed, the probabilities of these effects of casualties being positive was on average `r round(mean(probs[grepl("beta_cas_slope", names(probs), fixed = T)]),3)` As such, this model provides no evidence that casualties effected the probability of endorsement at all, above and beyond the effect of the modeled demographics. Note that the conflict specific effects include the main effect of casualty rates, and can be thought of as a "simple slope" for each conflict.
+
+A look at the histograms in the sidebar suggest that there was a substantial amount  of uncertainty regarding the effect of casualties in the Iraq conflict as well as the Lebanon conflict.
+
+
+Model 1 indicated that the strongest predictors of endorsing sustaining a conflict was either being male or Republican, while the casualties to date had little to no effect on the probability of endorsing the decision to sustain. However, in this model casualties are expressed as the log of cumulative sum, which is confounded with duration. If casualties did have the effect of increasing the probability of endorsement, while duration has the effect of decreasing the probability of endorsement, it is likely that there would be no direct effect of cumulative casualties. Model 2 below addresses this concern by calculating a backshifted casualty variable, as well as including duration explicitly in the model.
+
+
+#Model 2: Casualty Offset with Interactions
+
+```{r lncashists, fig.margin = TRUE,fig.show='hold', fig.cap = "Histograms of the Effects of Ln(Casualties). Note slight skewed distributions for Iraq and Lebanon. However, these histograms look adequate.", fig.width=4, fig.height=3.5, cache=TRUE, echo = FALSE, message = FALSE}
+stan_hist(Model1FullResults, pars = "beta_cas")
+stan_hist(Model1FullResults, pars = "beta_cas_slope")
+
+```
+
+In this model, we make several modifications and additions to the predictor variables. Here, we will not present the model equations as the random effect structure is unchanged with the addition of fixed effects interactions.
+
+Due to the collinearity of casualties to date, and duration of a conflict, we decided to take a different approach to including casualties in the model. Instead of using the cumulative casualties to date we use the average daily number of casualties since the last poll date. For example, if 500 casualties occurred between two poll dates 10 days apart, the casualty rate for the second poll date would be 50. For the first poll-date in a conflict we use the full number of casualties for that poll-date. Backshifting the casualty rate serves two purposes. The first is that it partially unlinks[^2] casualties from duration of the conflict, which allows us to model duration explicitly. The second is that it captures the "burst" nature of casualties in a more intuitive fashion. For example, during the Iraq conflict casualties occurred at a steady pace, with on average around 400 additional casualties occurring between each poll date. During the Vietnam War, there was nearly a 200% increase in casualties between the first and second poll date. The backshifted casualty rate captures this spiking casualty rate better than a cumulative casualty rate. 
+
+[^2]: This differencing approach is commonly used in the analysis of trending data, such as a variable that increases over time, as it theoretically removes the dependency of the variable on the time it was measured. 
+
+In addition to the change in casualty rate, we included duration of the conflict in a year scale, both a fixed effect, and a set of random effects, one for each conflict. Finally, we included as fixed effects interactions between demographics and duration, as well as between demographics and our casualty variable. We did not include random effects for these interactions, as those are included in Model 3.
+
+We additionally include two additional respondent level variables, binary indicators for: if the respondent believes the war was a mistake, and if the war has been a success. Interactions between these variables and casualties, as well as these variables and duration are specified. 
+
+Finally, we include the polling data from the first Gulf War, coded as Kuwait.
+
+An inspection of the trace-plots indicates that all chains converged to the posterior distribution. Figure 6 below shows the parameter medians and 50% (95%) credible intervals for fixed main effects and their random counterparts.
+
+```{r offsetParams, fig.fullwidth = TRUE, fig.height=7, fig.width=10, message=FALSE, echo=FALSE, fig.cap="Main Effects and Conflict Specific Effects for Model 2, with 50 (95) Credible Intervals. Note the expected direction of effects for Mistake and Success, and the negative effect of Partisan for Afghanistan. Note too the strong positive effect of casualties for the Iraq War. This suggests a conflict specific sunk cost effect."}
+offsetForPlots <- offsetModelSuccessMistake
+probs <- posteriorProbs(offsetModelSuccessMistake@sim$samples)
+
+###Plots for OffsetModel
+plot(offsetModelSuccessMistake, pars = c("beta_cas_slope", "beta_dur_slope", "beta_partisan_slope", "beta_male_slope", "beta_mistake_slope", "beta_success_slope"),ci_level = .5)
+
+
+
+
+```
+
+
+From a visual inspection of this plot (Figure 6), two features are immediately apparent. For the most part, the demographics and respondent variables have expected directionality, with partisan, male and believing the war was a success increasing the probability of a sustain endorsement, while mistake and duration have either negligible effects, or negative impacts on the probability of endorsement. On the other hand, casualties  appeared to have a marginally positive effect on the probability of endorsement, with the effect of casualties during the Iraq war being the most positive, and having the highest probability of the effect being positive (`r probs["beta_cas_slope[2]"]`). Note that due to the presence of the interaction terms for demographics and individual responses, these effects can be thought of as the effect of casualties on the probability of endorsing sustain for individuals who were female, non-partisan, and did not believe that the conflict was a success or a failure. A final interesting effect is that of partisan for the Afghanistan conflict, which is fairly negative (Probability of being negative = `r 1-probs["beta_partisan_slope[1]"]`). This is likely due to the fact that the sitting president during the Afghanistan conflicts polling dates was a Democrat.
+
+
+## Interaction Fixed Effects
+Below is the parameter plot containing medians and 50% (95%) credible intervals for our fixed effects interaction parameters relating to casualties.
+
+```{r offsetParams2, fig.fullwidth = TRUE, fig.height=5, fig.width=7, message=FALSE, echo=FALSE, fig.cap="Interaction Terms for Model 2. Note the positive interaction for Success, and negative interactions for Male and Partisan."}
+
+plot(offsetModelSuccessMistake, pars = c("beta_casbypartisan", "beta_casbymale", "beta_casbymistake", "beta_casbysuccess"), ci_level = .5) + scale_y_continuous(labels = rev(c("Casualties by Partisan", "Casualties by Male", "Casualties by Mistake", "Casualties by Success")))
+
+```
+
+The interactions of note here are those for Partisan and for Success. For Partisan, the probability that the interaction effect is positive is high, (Probability = `r probs["beta_casbypartisan"]`), suggesting that for partisan respondents, casualties exhibit a sunk cost effect. For success however, the interaction effect is likely negative (Probability = `r 1-probs["beta_casbysuccess"]`), which suggests that for those respondents who say that the conflict has been a success, casualties have a negative impact on the probability of endorsing a sustain.
+
+However, like the conflict non-specific demographic effects in Model 1, these interaction effects, while intriguing, are only giving an aggregate picture of the interplay between casualties and demographics. Our next model, Model 3, expands the model to allow conflict specific interaction terms.
+
+```{r sunkcostintfig, fig.margin = TRUE, fig.height=3.5, fig.width=4, fig.cap="Histogram for Casualties By Republican. Note that the histogram indicates a normal posterior distribution.", message=FALSE, echo= FALSE}
+
+stan_hist(offsetForPlots, pars = "beta_casbypartisan")
+
+```
+
+
+
+
+# Model 3: Fully Random Interaction Terms
+
+In this model, we allow the interaction terms (e.g. casualties by partisan) to have random effects. This strategy has advantages in that it allows for different conflicts to have different interaction effects, however it does have the disadvantage of lowering power to detect small interactions.
+
+We propose random effects for the following interactions: casualties by male, casualties by partisan, casualties by success, casualties by mistake, duration by male, duration by partisan, duration by success, duration by mistake.
+
+Due to the number of random effects, we will systematically report the results from aggregate down to conflict specific. We will report the overall main effects first, followed  by the overall interaction effects. Following that, we will describe the conflict specific main effects and interactions.
+
+## Main Effects
+
+
+```{r fig.fullwidth = TRUE, fig.height=5, fig.width=7, message=FALSE, echo=FALSE, fig.cap="Main Effect Means and 50 percent (95 percent) Credible Intervals for Model 3. Clear main effects for male, success and mistake, while for the effect of casualty and duration, it is probable that the effects are negative. The main effect of partisanship is unclear."}
+library(ggplot2)
+fullRandom <- offsetModelFullRandomInteractions
+probs <- posteriorProbs(fullRandom@sim$samples)
+names(fullRandom)[which(names(fullRandom) %in% c("beta_cas", "beta_dur", "beta_male", "beta_partisan", "beta_success", "beta_mistake"))] <-c("Partisan", "Male","Success","Mistake","Casualties","Duration")
+
+
+ plot(fullRandom,chains = 1:3, pars = c("beta_cas", "beta_dur", "beta_male", "beta_partisan", "beta_success", "beta_mistake"), ci_level = .5) 
+
+ 
+```
+
+From the Figure 9 below, it is clear that the effect of both male, and of endorsing the conflict as a success are positive, with probability approaching 1. The effect of saying that the conflict is a mistake is negative, though the posterior distribution of this effect is considerably more spread out. This suggests that it is unclear what the magnitude of the effect is. A histogram of the effect of mistake is included in the side bar, and indicates a central mass around the mean, but substantial tails.
+
+The effect of Partisanship on endorsement that the conflict was a success or not appears to be negative (Probability = `r 1-probs["beta_partisan"]`), however the variance of the posterior distribution is such that the magnitude is unclear. The marginal figure shows a histogram of the posterior distribution, which shows a bi-modal distribution. This suggests substantial uncertainty regarding the location of this parameter. 
+
+```{r fig.margin = TRUE, fig.height=3.5,fig.show="hold", fig.width=4, fig.cap="Histogram for Main Effect of Mistake and Partisan. The bimodal distribution for the effect of Partisan suggests that there is substantial heterogeneity in the effect of Partisan.", message=FALSE, echo= FALSE}
+stan_hist(fullRandom, pars = "beta_mistake") + labs(x = "Main Effect of Mistake")
+stan_hist(fullRandom, pars = "beta_partisan") + labs(x = "Main Effect of Partisan")
+
+```
+
+Finally both the main effect of casualty and duration had slightly negative means, and the probabilities that these effects are negative is `r 1-probs["beta_cas"]` and `r 1-probs["beta_dur"]` respectively.
+
+In summary, the main effects of the predictors suggest that a negative effect of casualties on probability of endorsing sustaining a conflict likely exists regardless of conflict or characteristics of the respondent. This runs counter to a general sunk cost effect of casualties, which would be indicated by a positive main effect of casualties. However, the main effects, by design, do not build in any information about the respondent, nor the specific conflict. To understand how the effect of casualties change with the respondent attributes, we turn to the interaction terms. 
+
+
+
+## Interactions of Respondent Attributes with Casualties
+
+
+The interaction terms in Figure 11 below suggest a possible respondent sunk cost effect of casualties. The interaction effect of being male, and being partisan are both likely positive (Probabilities = `r probs["beta_casbymale"]` and `r probs["beta_casbypartisan"]` respectively). This indicates that either there is a slight sunk cost effect of casualties for those groups, or that the effect of casualties on probability of endorsing sustain is less negative for those groups. At this point, this is a question of the magnitude of the main effect and interaction terms. 
+
+```{r fig.fullwidth = TRUE, fig.height=5, fig.width=7,fig.show="hold", message=FALSE, echo=FALSE, fig.cap="Casualties Interactions Medians and 50 percent (95 percent) Credible Intervals for Model 3. Probable positive interactions for Male, Partisan and Mistake, while for Success, a probable negative interaction term, though with high variance. "}
+library(ggplot2)
+
+names(fullRandom)[which(names(fullRandom) %in% c("beta_casbymale", "beta_casbypartisan", "beta_casbysuccess", "beta_casbymistake"))] <-c("Casualties by Partisan", " Casualties by Male","Casualties by Mistake"," Casualties by Success")
+
+
+ plot(fullRandom,chains = 1:3, pars = c("beta_casbymale", "beta_casbypartisan", "beta_casbysuccess", "beta_casbymistake"), ci_level = .5) 
+
+```
+
+
+The Casualties by Success interaction is likely positive (Probability = `r probs["beta_casbysuccess"]`), which suggests that respondents that view the conflict as a success are less likely to be impacted by casualty rates than those respondents who do not view the conflict as a success.
+
+Finally, the interaction term for Casualties by Mistake is likely negative (Probability = `r 1 - probs["beta_casbymistake"]`), though with large variance. This suggests that respondents that view a conflict as a mistake are more negatively impacted by casualty rates (in terms of their probability to endorse sustaining the conflict), than individuals who do not believe the conflict is a mistake.
+
+## Duration Interactions
+
+```{r fig.fullwidth = TRUE, fig.height=5, fig.width=5, message=FALSE, echo=FALSE, fig.cap="Duration Interactions Medians and 50 percent (95 percent) Credible Intervals for Model 3.  Probable positive interactions for Male, Partisan and Mistake, while for Success, a probable negative interaction term, though with high variance" }
+library(ggplot2)
+
+names(fullRandom)[which(names(fullRandom) %in% c("beta_durbymale", "beta_durbypartisan", "beta_durbysuccess", "beta_durbymistake"))] <-c("Duration by Partisan", "Duration by Male","Duration by Mistake","Duration by Success")
+
+
+ plot(fullRandom,chains = 1:3, pars = c("beta_durbymale", "beta_durbypartisan", "beta_durbysuccess", "beta_durbymistake"), ci_level = .5) 
+
+```
+
+ The interaction terms for duration are shown in Figure 12 below. There appears to be a likely positive effect of partisan, success and mistake, with the magnitude of the effect for mistake being considerably larger than that of partisan or success. The probabilities that these interaction terms are positive are `r probs["beta_durbypartisan"]`, `r probs["beta_durbysuccess"]` and `r probs["beta_durbymistake"]` respectively. These positive interaction effects suggest that for individuals who are partisan, believe the conflict is a success or a mistake are more likely to endorse sustaining the conflict as the conflict becomes longer in duration (or, at least are less unlikely to endorse sustaining said conflict).
+
+Finally, there appears to be a small negative interaction effect of male (Probability = `r 1- probs["beta_durbymale"]`).
+
+##Conflict Specific Main Effects
+
+Due to the presence of the conflict random effects, we are able to obtain conflict specific estimates of our main effects. These are presented below in Figure 13:
+
+```{r  fig.width = 10, fig.height = 7, fig.fullwidth = TRUE, fig.cap = "Posterior Medians and (50) 95 Credible Intervals for Conflict Specific Main Effects. Note the reversed effects of Partisan for Iraq and Afghanistan. Also note the expected direction of effects for other demographics. ", cache=TRUE,echo=FALSE, message=FALSE}
+  
+ 
+ names(fullRandom)[grepl("beta_cas_slope", names(fullRandom))] <- c("Casualties Afghanistan", "Casualties Iraq","Casualties Kuwait","Casualties Lebanon","Casualties Vietnam")
+names(fullRandom)[grepl("beta_dur_slope", names(fullRandom))] <- c("Duration Afghanistan", "Duration Iraq","Duration Kuwait","Duration Lebanon","Duration Vietnam")
+ names(fullRandom)[grepl("beta_partisan_slope", names(fullRandom))] <- c("Partisan Afghanistan", "Partisan Iraq","Partisan Kuwait","Partisan Lebanon","Partisan Vietnam")
+ names(fullRandom)[grepl("beta_male_slope", names(fullRandom))] <- c("Male Afghanistan", "Male Iraq","Male Kuwait","Male Lebanon","Male Vietnam")
+ names(fullRandom)[grepl("beta_wars_int", names(fullRandom))] <- c("Intercept Afghanistan", "Intercept Iraq","Intercept Kuwait","Intercept Lebanon","Intercept Vietnam")
+ names(fullRandom)[grepl("beta_success_slope", names(fullRandom))] <- c("Success Afghanistan", "Success Iraq","Success Kuwait","Success Lebanon","Success Vietnam")
+ names(fullRandom)[grepl("beta_mistake_slope", names(fullRandom))] <- c("Mistake Afghanistan", "Mistake Iraq","Mistake Kuwait","Mistake Lebanon","Mistake Vietnam")
+ 
+ 
+ 
+p <- plot(fullRandom, pars = c("beta_wars_int",
+                                 "beta_cas_slope","beta_dur_slope","beta_partisan_slope", "beta_male_slope", "beta_success_slope", "beta_mistake_slope"),ci_level = .8, outer_leve =.95)
+
+p
+```
+
+
+Due to the number of effect estimates, only specific trends and interesting effects will be interpreted here.
+
+Each of the conflict specific intercepts were likely positive, suggesting that when all other predictors in the model are 0, individuals would, theoretically, endorse sustaining the conflict. This by itself is not useful, however, the larger value for the Iraq war is of importance. This indicates that the Iraq war a higher baseline level of sustain support than any other conflict. The probability that the intercept for the Iraq war is positive is `r probs["beta_wars_int[2]"]`.
+
+The conflict specific effect for casualties is likely negative for all conflicts, but again, the Iraq war exhibits a more specific effect than other conflicts, as well as the highest probability of being  negative, `r 1- probs["beta_cas_slope[2]"]`. This suggest that when all other predictors in the model are 0, (i.e. female, non-partisan, does not believe the conflict is a success or a mistake), casualties decrease the probability that the respondent would endorse sustaining the conflict. Note this is quite different from the results of Model 2, where the effect of casualties for the Iraq conflict was positive. This difference is likely due to the inclusion of conflict specific interactions.
+
+There are no prominent effects of duration, aside from a slight positive direction for the effect of duration during the Vietnam war. The probability that this effect is positive is `r probs["beta_dur_slope[5]"]`. 
+
+The effect of being partisan during the Afghanistan conflict is likely negative, with probability `r 1- probs["beta_partisan_slope[1]"]`, while the effect of being partisan during the Iraq war is distinctively positive with probability `r probs["beta_partisan_slope[2]"]`. This large difference is likely due to the changing definitions of partisan between these two conflicts. With partisan being defined as the same party as the sitting president, during the Iraq War the president was Republican, while during the Afghanistan conflict the president was a Democrat. Other conflicts' effect of partisanship were ambiguous.
+
+The effect for being male was strongly positive for each conflict. This suggests that male respondents were more likely to endorse sustaining a conflict in general regardless of the conflict in question. Finally, both the effect of mistake and success were as one might expect, with saying the conflict was a mistake being associated with decreased probability of endorsing a sustain, while saying the conflict was a success was associated with increased probability of endorsing a sustain.
+
+##Conflict Specific Interactions with Casualties
+
+
+
+
+
+```{r  fig.width = 10, fig.height = 7, fig.fullwidth = TRUE, fig.cap = "Posterior Medians and (50) 95 Credible Intervals for the Conflict Specific Interactions with Casualties. Note the positive interaction of casualties with partisan for Vietnam. Note too the positive interaction of casualties with male for the Iraq War. ", cache=TRUE,echo=FALSE, message=FALSE}
+  
+ 
+ names(fullRandom)[grepl("beta_casbypartisan_slope", names(fullRandom))] <- c("Casualties by Partisan Afghanistan", "Casualties by Partisan Iraq","Casualties by Partisan Kuwait","Casualties by Partisan Lebanon","Casualties by Partisan Vietnam")
+names(fullRandom)[grepl("beta_casbymale_slope", names(fullRandom))] <- c("Casualties by Male Afghanistan", "Casualties by Male Iraq","Casualties by Male Kuwait","Casualties by Male Lebanon","Casualties by Male Vietnam")
+ names(fullRandom)[grepl("beta_casbysuccess_slope", names(fullRandom))] <- c("Casualties by Success Afghanistan", "Casualties by Success Iraq","Casualties by Success Kuwait","Casualties by Success Lebanon","Casualties by Success Vietnam")
+ names(fullRandom)[grepl("beta_casbymistake_slope", names(fullRandom))] <- c("Casualties by Mistake Afghanistan", "Casualties by Mistake Iraq","Casualties by Mistake Kuwait","Casualties by Mistake Lebanon","Casualties by Mistake Vietnam")
+
+
+p <- plot(fullRandom, pars = c("beta_casbypartisan_slope","beta_casbymale_slope","beta_casbysuccess_slope", "beta_casbymistake_slope"),ci_level = .5, outer_leve =.95)
+
+
+p
+```
+
+
+ These interactions are presented below in Figure 14. The majority of the conflict specific interactions with casualties were close to, or centered on 0, which suggests a lack of an interaction effect. However, there are several interactions that do have larger magnitudes. To begin, the interaction of casualties with partisanship during the Vietnam conflict has a large positive magnitude, and the probability that it is positive is `r probs["beta_casbypartisan_slope[5]"]`. This suggests that casualties act as a sunk cost for partisan individuals (during the Vietnam War poll dates in 1967, 1968, and 1969 this would be Democrats), increasing the probability that they would endorse sustaining the conflict. 
+
+A linked set of effects are found in the interaction of casualties with male, success, and mistake for the Iraq War. Each of these effects are likely positive, with respective probabilities `r probs["beta_casbymale_slope[2]"]`, `r probs["beta_casbysuccess_slope[2]"]` and `r probs["beta_casbymistake_slope[2]"]`. These effects have small magnitude, but low variance, which in turn suggests that the effect estimate is stable. 
+
+The positive effect estimate for the interaction between casualties and mistake for the Iraq war is opposite to the negative interactions for both the Kuwait conflict and the Vietnam conflict. These effects have a   high probability of being negative (`r 1-probs["beta_casbymistake_slope[3]"]` and  `r 1-probs["beta_casbymistake_slope[5]"]` respectively). 
+
+## Conflict Specific Interactions with Duration
+
+Below are the conflict specific interactions of partisan, male, success and mistake with duration.
+
+```{r  fig.width = 10, fig.height = 7, fig.fullwidth = TRUE, fig.cap = "Posterior Medians and (50) 95 Credible Intervals of Conflict Specific Interactions of Duration with Demographics. Note the strong positive interaction by mistake for the Kuwait conflict. This was due to the short duration of the Kuwait conflict (39 days).", cache=TRUE,echo=FALSE, message=FALSE}
+  
+ 
+ names(fullRandom)[grepl("beta_durbypartisan_slope", names(fullRandom))] <- c("Duration by Partisan Afghanistan", "Duration by Partisan Iraq","Duration by Partisan Kuwait","Duration by Partisan Lebanon","Duration by Partisan Vietnam")
+names(fullRandom)[grepl("beta_durbymale_slope", names(fullRandom))] <- c("Duration by Male Afghanistan", "Duration by Male Iraq","Duration by Male Kuwait","Duration by Male Lebanon","Duration by Male Vietnam")
+ names(fullRandom)[grepl("beta_durbysuccess_slope", names(fullRandom))] <- c("Duration by Success Afghanistan", "Duration by Success Iraq","Duration by Success Kuwait","Duration by Success Lebanon","Duration by Success Vietnam")
+ names(fullRandom)[grepl("beta_durbymistake_slope", names(fullRandom))] <- c("Duration by Mistake Afghanistan", "Duration by Mistake Iraq","Duration by Mistake Kuwait","Duration by Mistake Lebanon","Duration by Mistake Vietnam")
+
+
+p <- plot(fullRandom, pars = c("beta_durbypartisan_slope","beta_durbymale_slope","beta_durbysuccess_slope", "beta_durbymistake_slope"),ci_level = .5, outer_leve =.95)
+
+
+p
+```
+
+The majority of these effects are either slightly positive or ambiguous. One of the striking effects is that of the interaction between duration and mistake for Kuwait. The magnitude of this effect is considerably higher than that of any of the other effects. The reason for this has to do with the scaling of the duration measure. Duration is scaled to number of years the conflict has been going on. The maximum duration of the Kuwait conflict is 39 days, while all other conflicts have durations that span a year or more. Due to this, the large effect estimate of duration by mistake for the Kuwait conflict should be interpreted more as a moderate effect of duration, in that it appears that for those individuals who view the conflict as a mistake their probability of endorsing sustaining the conflict increases as the duration increased. However, the Kuwait conflict was simply not long enough to make any statements about how a longer duration would have effected the probability of a sustain endorsement.
+
+#Summary and Conclusion
+
+In this analysis, three hierarchical Bayesian logistic models were fit to the binary endorsement of sustaining the conflict in question. Our first model allowed for conflict specific intercepts and effect of casualties, as well as general effects of being male and being Republican, as well as general interactions of those two variables with casualties. Casualties were operationalized as the log transformed raw casualty count at the poll date. This model found no evidence for a general or conflict specific sunk cost effect of casualties. Due to this, Model 2 was proposed. Casualties were reoperationalized into a casualty rate (in casualties per day) during the preceding time interval, duration was added to the model, as were indicators of if the respondent thought the conflict was a success, and if the respondent thought the conflict was a mistake. Due to the changing nature of Republican Party over the years, that variable was changed into an indicator of partisanship (if the respondent shared the political party of the sitting president). Finally, the data from the first Gulf War was included.
+
+Model 2 found evidence for a conflict specific sunk cost effect of casualties only for the Iraq war, as well as expected directionality for the effects of our demographic variables. Due to the lack of findings for other conflicts, Model 3 was proposed. Model 3 extended Model 2 with conflict specific interaction terms. This is the most general substantively interesting model, and is the basis of our conclusions.
+
+Model 3 did not find evidence for a overall conflict specific sunk cost effect of casualties for the Iraq war, however, this is in part due to the presence of conflict specific sunk cost interactions of casualties with various demographics. These effects were primarily confined to the Iraq war, though there are several interesting findings from other conflicts.
+
+With regards to the Iraq war findings, Model 3 suggests that men, individuals who are partisan, and individuals who believe the conflict is a success exhibit a sunk cost effect for casualties. These interactions are all likely positive. The overall effect of casualties for the Iraq war is likely negative, and this corresponds to individuals who are female, non-partisan and who do not believe the war was a success. 
+
+As for other conflicts, the Vietnam War exhibits a large positive casualties by partisan interaction. The magnitude of this effect compared to the overall effect of casualties for the Vietnam war (Ambiguous direction, and centered on near 0), this suggests that for those individuals who were partisan, casualties acted as a sunk cost during the Vietnam War.
+
+These analyses suggest that the effect of casualties on support of a conflict is likely a highly conflict specific effect, and very little general conclusions can be made. Due to the complexity of armed conflict, as well as the number of ways a conflict can manifest, this is perhaps not an unreasonable conclusion.
+
+\nocite{*}
